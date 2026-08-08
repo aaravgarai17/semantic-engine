@@ -1,0 +1,39 @@
+services:
+  engine:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - engine-data:/data
+    environment:
+      # 'hash' starts instantly with no model download. Switch to 'local' for
+      # real semantic retrieval (first start then downloads ~80 MB).
+      EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-hash}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Postgres with pgvector, for STORE=pgvector. Not required by the default
+  # in-memory configuration, which is what the evaluation uses.
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: engine
+      POSTGRES_PASSWORD: engine
+      POSTGRES_DB: engine
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U engine"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  engine-data:
+  pgdata:

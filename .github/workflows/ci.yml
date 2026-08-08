@@ -1,0 +1,124 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Tests & coverage
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # No API keys and no model weights: the hash embedder keeps this offline.
+      - name: Run tests with coverage
+        run: pytest --cov=app --cov-report=term-missing --cov-fail-under=85 -q
+
+  retrieval:
+    name: Retrieval evaluation runs
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # Gates on the harness working and all three strategies scoring — NOT on
+      # which one wins. Whether fusion helps is the result being measured;
+      # asserting a particular outcome would turn the measurement into a target
+      # and invite tuning the corpus until it agreed.
+      - name: Run the retrieval evaluation
+        run: |
+          output=$(python -m eval.run_eval --embedder hash)
+          echo "$output"
+          echo "$output" | grep -qE "^  hybrid +[0-9]+\.[0-9]%" \
+            || { echo "hybrid produced no score"; exit 1; }
+          echo "$output" | grep -qE "^  dense +[0-9]+\.[0-9]%" \
+            || { echo "dense produced no score"; exit 1; }
+          echo "$output" | grep -q "FINDING:" \
+            || { echo "no verdict reported"; exit 1; }
+
+  semantic-eval:
+    name: Retrieval evaluation with real embeddings
+    runs-on: ubuntu-latest
+    # Downloads PyTorch and a model, so it runs only on main rather than on
+    # every pull request.
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt sentence-transformers
+
+      - name: Evaluate with sentence-transformers
+        run: python -m eval.run_eval --embedder local --examples
+
+  api:
+    name: API smoke test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      - name: Upload a document and query it
+        env:
+          EMBEDDING_PROVIDER: hash
+        run: |
+          uvicorn app.main:app --port 8000 &
+          for i in $(seq 1 30); do
+            curl -fs http://localhost:8000/health >/dev/null && break
+            sleep 1
+          done
+
+          printf '# Errors\n\nERR_4032 means the connection pool was exhausted.\n' > /tmp/doc.md
+          job=$(curl -s -F "file=@/tmp/doc.md" http://localhost:8000/documents \
+                | python -c "import json,sys; print(json.load(sys.stdin)['job_id'])")
+
+          for i in $(seq 1 30); do
+            status=$(curl -s "http://localhost:8000/documents/$job" \
+                     | python -c "import json,sys; print(json.load(sys.stdin)['status'])")
+            [ "$status" = "ready" ] && break
+            [ "$status" = "failed" ] && { echo "ingestion failed"; exit 1; }
+            sleep 1
+          done
+
+          curl -s -X POST http://localhost:8000/query \
+            -H 'Content-Type: application/json' \
+            -d '{"question":"ERR_4032","generate":false}' \
+            | grep -q ERR_4032 || { echo "query did not retrieve the chunk"; exit 1; }
+          echo "API smoke test passed"
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose config --quiet
+      - run: docker build -t semantic-engine .
