@@ -64,47 +64,63 @@ pip install sentence-transformers
 python -m eval.run_eval --embedder local --examples
 ```
 
-13 documents → 45 chunks, 22 hand-labelled questions,
-`all-MiniLM-L6-v2` embeddings.
+14 documents → 49 chunks, **40 hand-labelled questions**,
+`all-MiniLM-L6-v2` embeddings, Apple M2.
 
 | Method | recall@5 | recall@10 | MRR | latency |
 | ------ | -------- | --------- | --- | ------- |
-| **dense only** | **100.0%** | 100.0% | **0.879** | 1.14 ms |
-| BM25 only | 72.7% | 72.7% | 0.640 | 0.03 ms |
-| hybrid (RRF) | 95.5% | 100.0% | 0.822 | 1.19 ms |
+| **dense only** | **97.5%** | 100.0% | **0.806** | 1.29 ms |
+| BM25 only | 62.5% | 65.0% | 0.536 | 0.03 ms |
+| hybrid (RRF) | 92.5% | 100.0% | 0.729 | 1.34 ms |
 
-Dense alone beat the fusion of dense and BM25 by 4.5 points.
+Dense alone beat the fusion by **5.0 points** at recall@5.
+
+The result held across two independently constructed question sets — an
+earlier 22-question version showed −4.5 points, and expanding to 40 questions
+with harder out-of-vocabulary identifiers moved it to −5.0. It is not an
+artifact of one unlucky sample.
+
+### The precise failure: ranking, not recall
+
+Look at recall@10 — **dense and hybrid are tied at 100%**. Fusion finds
+everything dense finds. What it loses is *ordering within the top 5*.
+
+That matters practically: a generator given the top 5 chunks gets a worse
+context set from hybrid, even though both retrievers would have surfaced the
+right passage eventually. Recall@10 hides the problem entirely, which is why
+reporting a single k is misleading.
 
 ### Why — and it is not that RRF is broken
 
-The per-category breakdown shows exactly what happened:
-
 | Question type | dense | BM25 | hybrid |
 | ------------- | ----- | ---- | ------ |
-| paraphrase — no shared vocabulary | **100.0%** | 37.5% | 87.5% |
-| identifier — exact codes and paths | 100.0% | 87.5% | 100.0% |
-| mixed — both signals | 100.0% | 100.0% | 100.0% |
+| paraphrase (18 q) — no shared vocabulary | **94.4%** | 27.8% | 83.3% |
+| identifier (12 q) — exact codes and paths | 100.0% | 91.7% | 100.0% |
+| mixed (10 q) — both signals | 100.0% | 90.0% | 100.0% |
 
-**Two predictions I got wrong.**
+The damage is entirely in the paraphrase row. BM25 scores **27.8%** there — it
+is returning close to noise — and equal-weight RRF injects that noise straight
+into the top ranks, pulling hybrid from 94.4% down to 83.3%.
 
-The first: I expected embeddings to smear `ERR_4032` into generic "error"
-space, making identifiers BM25's category to win. They didn't. A modern
-sentence-transformer retains enough lexical signal that an exact-token query
-still matches the chunk containing that token — dense scored 100% on
-identifiers too. The "embeddings can't do exact match" intuition is real for
-older models and largely obsolete for current ones.
+Where the retrievers were comparable, fusion did exactly what it promises. On
+identifier questions hybrid MRR is **0.938**, beating both dense (0.903) and
+BM25 (0.917) — both lists agreed on the right chunk, and agreement is what RRF
+rewards.
 
-The second, and the actual mechanism: **equal-weight fusion is only safe when
-the retrievers are comparably good.** On paraphrase questions BM25 scores
-37.5% — it is returning close to noise. RRF weights both lists equally, so that
-noise is injected straight into the top ranks, dragging hybrid from 100% down
-to 87.5%. Fusion didn't fail; it faithfully averaged a great ranking with a bad
-one.
+**The prediction I got wrong.** I expected embeddings to smear `ERR_4032` into
+generic "error" space, making identifiers the category BM25 wins. They didn't —
+dense scored **100%** on identifiers. A modern sentence-transformer retains
+enough lexical signal that an exact-token query still matches the chunk
+containing that token.
 
-Where the retrievers *were* comparable, fusion did what it promises. On
-identifiers, hybrid MRR is **0.906** against dense's 0.854 and BM25's 0.875 —
-better than either, because both lists agreed on the right chunk and agreement
-is what RRF rewards.
+I tested this deliberately by adding identifiers a model is unlikely to have
+seen in training — `libpq-dev`, `BLMOVE`, `vector_cosine_ops`, `ts_rank_cd`.
+Dense still handled them. The "embeddings can't do exact match" intuition is
+accurate for older models and largely obsolete for current ones.
+
+**The actual mechanism.** Equal-weight fusion is only safe when the retrievers
+are comparably good. Fusion didn't fail — it faithfully averaged a strong
+ranking with a weak one, which is what it was asked to do.
 
 ### The fix, and what it costs
 

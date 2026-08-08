@@ -343,6 +343,34 @@ for eighteen months after a successor is released.
 """,
     ),
     Document(
+        doc_id="internals",
+        title="Implementation Notes",
+        text="""# Implementation Notes
+
+## Build Dependencies
+
+Compiling the client from source on Debian requires libpq-dev to be present
+before the build begins, along with the standard toolchain.
+
+## Queue Primitives
+
+Atomic job claiming uses BLMOVE to shift an entry from the pending list into a
+per-worker processing list in a single operation. A separate pop followed by a
+push would leave a window in which a crash loses the job.
+
+## Vector Index Configuration
+
+The similarity index is declared with vector_cosine_ops rather than the L2
+operator class, because stored embeddings are unit normalised and cosine is the
+meaningful comparison for them.
+
+## Full Text Ranking
+
+Keyword relevance is computed with ts_rank_cd, which accounts for the proximity
+of matched terms rather than treating a document as an unordered bag.
+""",
+    ),
+    Document(
         doc_id="monitoring",
         title="Monitoring and Alerting",
         text="""# Monitoring and Alerting
@@ -512,6 +540,129 @@ QUESTIONS: list[tuple[str, str, QueryKind, str]] = [
         "twenty minutes",
         "mixed",
         "shared term 'invoice generation'",
+    ),
+
+    # ------------------------------------------------------------------
+    # Second batch, taking the set from 22 to 40 questions.
+    #
+    # Weighted toward the cases most likely to separate the retrievers:
+    # harder paraphrases (where the answer's vocabulary is further from the
+    # question's) and identifiers unlikely to appear in an embedding model's
+    # training data.
+    # ------------------------------------------------------------------
+
+    # ---- paraphrase ----
+    (
+        "what stops someone guessing my login over and over",
+        "ten consecutive unsuccessful attempts",
+        "paraphrase",
+        "answer says 'account lockout', question describes brute forcing",
+    ),
+    (
+        "is my information scrambled when it is sitting on disk",
+        "encrypted with keys rotated",
+        "paraphrase",
+        "answer says 'encryption at rest', question paraphrases heavily",
+    ),
+    (
+        "how quickly will someone get back to me if everything is broken",
+        "first response within one hour",
+        "paraphrase",
+        "answer says 'urgent reports', question describes the situation",
+    ),
+    (
+        "can I get everything you hold about me",
+        "complete copy of their records",
+        "paraphrase",
+        "answer says 'export requests', question paraphrases",
+    ),
+    (
+        "what happens to my records if I close my account",
+        "erasure requests are honoured",
+        "paraphrase",
+        "answer says 'deletion requests', question describes the scenario",
+    ),
+    (
+        "how do you stop the same charge going through twice",
+        "client-supplied key",
+        "paraphrase",
+        "answer says 'idempotent requests', question describes the effect",
+    ),
+    (
+        "who gets woken up when something breaks at night",
+        "rotation changes weekly",
+        "paraphrase",
+        "answer says 'on-call rotation', question is colloquial",
+    ),
+    (
+        "what if my server is slow to accept a notification",
+        "does not respond within ten seconds",
+        "paraphrase",
+        "answer says 'timeouts', question describes the symptom",
+    ),
+    (
+        "how do you stop one enormous request eating all the memory",
+        "chunked into groups of five hundred",
+        "paraphrase",
+        "answer says 'batch processing', question describes the concern",
+    ),
+    (
+        "do I have to prove who I am before I can move real money",
+        "verification before transacting",
+        "paraphrase",
+        "answer says 'identity checks', question is conversational",
+    ),
+
+    # ---- identifier ----
+    (
+        "libpq-dev",
+        "libpq-dev",
+        "identifier",
+        "exact package name",
+    ),
+    (
+        "BLMOVE",
+        "BLMOVE",
+        "identifier",
+        "exact command name (only appears once in the corpus)",
+    ),
+    (
+        "vector_cosine_ops",
+        "vector_cosine_ops",
+        "identifier",
+        "exact index operator class",
+    ),
+    (
+        "ts_rank_cd",
+        "ts_rank_cd",
+        "identifier",
+        "exact function name",
+    ),
+
+    # ---- mixed ----
+    (
+        "what is the retention period for transaction records",
+        "seven years",
+        "mixed",
+        "shared vocabulary plus a specific fact",
+    ),
+    (
+        "how are webhook failures retried",
+        "exponential backoff",
+        "mixed",
+        "shared term 'retried' plus intent",
+    ),
+    (
+        "which SDK languages are supported",
+        "Python, JavaScript, Ruby, and Go",
+        "mixed",
+        "shared term 'SDK'",
+    ),
+    (
+        "when does an alert page someone",
+        "error ratio exceeds one percent",
+        "mixed",
+        "shared term 'alert' plus semantic intent",
     ),
 ]
 

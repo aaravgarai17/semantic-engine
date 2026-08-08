@@ -136,10 +136,11 @@ echo "=================================================="
 eval_output=$($PY -m eval.run_eval --embedder hash 2>&1)
 echo "$eval_output" | grep -E "^  (dense|bm25|hybrid) " | sed 's/^/    /'
 
-if echo "$eval_output" | grep -q "questions     22"; then
-  ok "22 golden questions across paraphrase, identifier and mixed types"
+if echo "$eval_output" | grep -qE "questions +(3[0-9]|4[0-9]|50)$"; then
+  count=$(echo "$eval_output" | grep -oE "questions +[0-9]+" | grep -oE "[0-9]+")
+  ok "$count golden questions across paraphrase, identifier and mixed types"
 else
-  bad "unexpected question count"
+  bad "expected 30-50 golden questions"
 fi
 
 if echo "$eval_output" | grep -qE "^  hybrid +[0-9]+\.[0-9]%"; then
