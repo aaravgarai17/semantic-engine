@@ -23,6 +23,9 @@ repository](#the-headline-result--hybrid-retrieval-lost).
 
 ## Verify it in one command
 
+> **Common tasks:** `make help` lists everything — `make install`, `make test`,
+> `make verify`, and per-project shortcuts.
+
 ```bash
 pip install -r requirements.txt
 ./verify.sh
@@ -36,7 +39,7 @@ structure-aware chunking, and runs the full retrieval evaluation.
  ✓ exact identifier retrieved, rare terms weighted above common ones
  ✓ agreement across retrievers outranks a single first place
  ✓ heading trail tracked and prepended to embedded text
- ✓ 22 golden questions across paraphrase, identifier and mixed types
+ ✓ 40 golden questions across paraphrase, identifier and mixed types
  ✓ all three retrieval strategies scored
  ✓ evaluation reports a verdict on whether fusion helped
 
@@ -145,7 +148,7 @@ The honest recommendation from this evaluation is: **measure before adding
 fusion.** The complexity is only worth it if your corpus has the properties
 that make it pay.
 
-> A note on the corpus: 45 chunks of clean synthetic prose is small and easy.
+> A note on the corpus: 49 chunks of clean synthetic prose is small and easy.
 > A larger corpus with real out-of-vocabulary terms would likely favour hybrid
 > more. That is a limitation of the evaluation, listed with the others below —
 > not a reason to discard its result.
@@ -162,7 +165,7 @@ and partly refutes it — worth reading in that order.
 Embeddings place semantically similar text near each other, so *"how do I reset
 my password"* retrieves *"credential recovery requires identity verification"*
 despite sharing **no words at all**. Measured: 100% recall@5 on paraphrase
-questions, against BM25's 37.5%. This part held up completely.
+questions, against BM25's 27.8%. This part held up completely.
 
 ### BM25 matches words
 
