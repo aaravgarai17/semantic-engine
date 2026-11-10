@@ -1,9 +1,9 @@
-fastapi==0.141.1
-uvicorn[standard]==0.52.4
-pydantic==2.13.5
-pydantic-settings==2.15.0
-python-dotenv==1.2.3
-python-multipart==0.0.32
+fastapi==0.162.2
+uvicorn[standard]==0.54.0
+pydantic==2.14.3
+pydantic-settings==2.16.2
+python-dotenv==1.2.4
+python-multipart==0.0.33
 anthropic==0.125.0
 pypdf==6.18.1
 python-docx==1.2.0
