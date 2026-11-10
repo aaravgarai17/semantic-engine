@@ -27,6 +27,43 @@ jobs:
       - name: Run tests with coverage
         run: pytest --cov=app --cov-report=term-missing --cov-fail-under=85 -q
 
+  integration:
+    name: Postgres + pgvector and Redis
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: engine
+          POSTGRES_PASSWORD: engine
+          POSTGRES_DB: engine
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U engine" --health-interval 5s
+          --health-timeout 3s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 3s --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # The store and cache tests skip without these; here they run for real.
+      - name: Run store and cache tests against live services
+        env:
+          TEST_DATABASE_URL: postgresql://engine:engine@localhost:5432/engine
+          TEST_REDIS_URL: redis://localhost:6379/0
+        run: pytest -q tests/test_pgvector.py tests/test_cache.py
+
   retrieval:
     name: Retrieval evaluation runs
     runs-on: ubuntu-latest

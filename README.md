@@ -1,7 +1,7 @@
 # semantic-engine
 
 [![CI](https://github.com/aaravgarai17/semantic-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/aaravgarai17/semantic-engine/actions/workflows/ci.yml)
-![Coverage](https://img.shields.io/badge/coverage-90%25-brightgreen)
+![Coverage](https://img.shields.io/badge/coverage-91%25-brightgreen)
 ![Python](https://img.shields.io/badge/python-3.10%20|%203.11%20|%203.12-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
@@ -245,6 +245,10 @@ argument for it over a learned reranker in a system this size.
              └──────────────────────────────────────┘
 ```
 
+Storage is in-memory by default or Postgres with pgvector (`STORE=pgvector`),
+and an optional Redis cache (`REDIS_URL`) answers repeated questions before any
+of the query path runs.
+
 ---
 
 ## Chunking: structure before size
@@ -319,6 +323,45 @@ hit a provider rate limit, turning a slow ingest into a failed one.
 
 ---
 
+## Storage: in-memory or Postgres + pgvector
+
+`STORE=memory` (the default) keeps everything in one process with exact
+brute-force search. It is what the evaluation uses, because an approximate
+index would add errors indistinguishable from ranking errors.
+
+`STORE=pgvector` is the deployment path:
+
+- **Dense search** uses an HNSW index with `vector_cosine_ops`. HNSW applies a
+  `WHERE collection = …` filter after the graph search, so filtered queries
+  widen the search beam (`hnsw.ef_search`) to keep enough candidates.
+- **Keyword search** uses Postgres full-text search. `plainto_tsquery` ANDs
+  every word, so a natural-language question would only match chunks
+  containing all of its terms. Instead the query is built as an OR of the
+  question's own lexemes, each quoted so identifiers like `libpq-dev` survive,
+  and ranked with `ts_rank_cd`.
+- **Writes are one transaction per document**, so a query never sees half an
+  ingested document.
+- **A dimension mismatch fails at startup.** A table built for a 384-d embedder
+  would otherwise accept a 1536-d one and fail on every query instead.
+
+## Query cache (Redis)
+
+Generation is the slow, paid part of a query. With `REDIS_URL` set, a repeated
+question is answered from Redis without retrieval or a Claude call, and the
+response says `"cached": true`.
+
+- **Exact match, not semantic.** "How do I enable 2FA?" and "how do I disable
+  2FA?" embed almost identically and need opposite answers, so the cache only
+  hits on the same question (ignoring case and spacing) with the same
+  retrieval settings.
+- **Invalidation is one write.** Every key includes a generation number, and
+  ingesting or deleting a document increments it, so all older entries stop
+  matching at once and expire on their own via TTL (`CACHE_TTL_SECONDS`).
+- **It fails open.** If Redis is down, queries run uncached and a warning is
+  logged; the cache can never take the service down.
+
+---
+
 ## Running it
 
 **Requires:** Python 3.10+.
@@ -368,11 +411,20 @@ With Docker:
 docker compose up --build
 ```
 
+With Postgres and Redis (the compose file starts both):
+
+```bash
+STORE=pgvector \
+DATABASE_URL=postgresql://engine:engine@db:5432/engine \
+REDIS_URL=redis://redis:6379/0 \
+docker compose up --build
+```
+
 ## Tests
 
 ```bash
-pytest -q                                     # 132 tests
-pytest --cov=app --cov-report=term-missing    # 90%
+pytest -q                                     # 161 tests; 16 skip without Postgres/Redis
+pytest --cov=app --cov-report=term-missing    # 91%
 ```
 
 Everything runs offline via the non-semantic hash embedder. Covers BM25
@@ -394,8 +446,8 @@ evaluation with real sentence-transformer embeddings.
   likely add several points of precision. It's the highest-value next step and
   it isn't here.
 - **In-memory store is the default.** Exact and dependency-free, but the whole
-  corpus lives in one process. `PgVectorStore` has the schema and HNSW index
-  defined; the async query path isn't wired up.
+  corpus lives in one process. `STORE=pgvector` moves it to Postgres, but the
+  evaluation still runs in memory, so retrieval quality on HNSW is unmeasured.
 - **Postgres keyword search would differ.** The in-memory path uses the BM25
   written here; pgvector's path uses `ts_rank_cd`, a different scoring
   function. Results would shift slightly between backends.
@@ -410,8 +462,9 @@ evaluation with real sentence-transformer embeddings.
 - **Only one embedding model was tested.** `all-MiniLM-L6-v2`. A weaker model
   would plausibly flip the result, since fusion helps most when the dense
   retriever is mediocre.
-- **No semantic cache or multi-turn rewriting.** Phase 6 of the plan; v1 ships
-  without them.
+- **The cache is exact-match only.** A reworded question is a miss. A semantic
+  layer would catch rewordings but needs a measured similarity threshold to
+  avoid serving the wrong answer; there is also no multi-turn query rewriting.
 - **No reciprocal-rank tuning.** k=60 is the conventional default, not a value
   fitted to this corpus.
 - **`all-MiniLM-L6-v2` is a small model.** Chosen so the evaluation runs offline
@@ -428,7 +481,8 @@ semantic-engine/
 │   ├── retrieval.py   # BM25, dense search, RRF        ← the core
 │   ├── chunking.py    # structure-aware splitting
 │   ├── embeddings.py  # pluggable providers
-│   ├── store.py       # in-memory + pgvector schema
+│   ├── store.py       # in-memory and pgvector stores
+│   ├── cache.py       # Redis query cache
 │   ├── ingest.py      # async pipeline with status
 │   ├── generate.py    # citations and refusal
 │   ├── extract.py     # PDF / DOCX / MD / TXT
@@ -436,6 +490,6 @@ semantic-engine/
 ├── eval/
 │   ├── dataset.py     # 14 docs, 40 labelled questions
 │   └── run_eval.py    # the comparison table
-├── tests/             # 132 tests, fully offline
+├── tests/             # 161 tests; Postgres/Redis ones skip offline
 └── verify.sh          # 8 checks proving this README
 ```

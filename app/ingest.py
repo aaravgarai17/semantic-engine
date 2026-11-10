@@ -25,7 +25,7 @@ import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from app.chunking import chunk_document
 from app.extract import ExtractionError, extract
@@ -121,8 +121,12 @@ class Ingestor:
         overlap: int = 200,
         max_concurrent: int = 2,
         embed_batch: int = 64,
+        on_indexed: Optional[Callable[[], None]] = None,
     ) -> None:
         self.store = store
+        # Called after a document's chunks land in the store, so anything
+        # derived from the index (the query cache) can drop stale entries.
+        self.on_indexed = on_indexed
         self.embedder = embedder
         self.chunk_size = chunk_size
         self.overlap = overlap
@@ -206,6 +210,8 @@ class Ingestor:
             # --- store -----------------------------------------------------
             job.stage = Stage.STORING
             self.store.add_chunks(stored, vectors)
+            if self.on_indexed is not None:
+                self.on_indexed()
 
             job.stage = Stage.READY
             job.finished_at = time.time()
