@@ -40,6 +40,12 @@ class Settings(BaseSettings):
     store: str = "memory"                       # memory | pgvector
     database_url: str = "postgresql://engine:engine@localhost:5432/engine"
 
+    # --- query cache ---
+    # Empty disables caching. Set to e.g. redis://localhost:6379/0 to cache
+    # answers, so a repeated question skips retrieval and the Claude call.
+    redis_url: str = ""
+    cache_ttl_seconds: int = 3600
+
     # --- ingestion ---
     upload_dir: str = "data/uploads"
     max_upload_mb: int = 50

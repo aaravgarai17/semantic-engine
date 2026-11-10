@@ -22,7 +22,8 @@ from app.extract import SUPPORTED
 from app.generate import answer_question
 from app.ingest import Ingestor
 from app.retrieval import reciprocal_rank_fusion
-from app.store import InMemoryStore
+from app.cache import build_cache, cache_key
+from app.store import VectorStore, build_store
 
 logging.basicConfig(
     level=getattr(logging, settings.log_level.upper(), logging.INFO),
@@ -41,9 +42,11 @@ async def lifespan(app: FastAPI):
         settings.embedding_provider, api_key, settings.embedding_model
     )
 
-    store = InMemoryStore()
+    store = build_store(settings.store, settings.database_url, embedder.dimensions)
+    cache = build_cache(settings.redis_url, settings.cache_ttl_seconds)
     state["embedder"] = embedder
     state["store"] = store
+    state["cache"] = cache
     state["ingestor"] = Ingestor(
         store,
         embedder,
@@ -51,17 +54,22 @@ async def lifespan(app: FastAPI):
         overlap=settings.chunk_overlap,
         max_concurrent=settings.max_concurrent_ingestions,
         embed_batch=settings.embed_batch_size,
+        on_indexed=cache.invalidate,
     )
 
     Path(settings.upload_dir).mkdir(parents=True, exist_ok=True)
     log.info(
-        "ready: %s embedder (%dd), %s store",
+        "ready: %s embedder (%dd), %s store, %s",
         type(embedder).__name__, embedder.dimensions, settings.store,
+        type(cache).__name__,
     )
     if not settings.can_generate:
         log.warning("ANTHROPIC_API_KEY not set — /query will retrieve but not generate")
 
     yield
+
+    if hasattr(store, "close"):
+        store.close()
 
 
 app = FastAPI(
@@ -163,11 +171,28 @@ def job_status(job_id: str):
 @app.post("/query")
 def query(request: QueryRequest):
     """Retrieve and, if configured, generate a cited answer."""
-    store: InMemoryStore = state["store"]
+    store: VectorStore = state["store"]
     embedder = state["embedder"]
+    cache = state["cache"]
     top_k = request.top_k or settings.top_k
+    will_generate = request.generate and settings.can_generate
 
-    if not store.chunks:
+    # Everything that can change the response goes into the key, so a hit is
+    # always the answer this exact request would have produced.
+    generation = cache.generation()
+    key = cache_key(
+        generation,
+        question=request.question, collection=request.collection, top_k=top_k,
+        method=request.method, generate=will_generate, model=settings.model,
+        candidate_k=settings.candidate_k, rrf_k=settings.rrf_k,
+        min_score=settings.min_retrieval_score,
+        max_context_chars=settings.max_context_chars,
+        max_tokens=settings.max_answer_tokens,
+    )
+    if generation >= 0 and (hit := cache.get(key)) is not None:
+        return {**hit, "cached": True}
+
+    if store.stats()["chunks"] == 0:
         raise HTTPException(status_code=409, detail="no documents have been indexed yet")
 
     dense_hits = bm25_hits = []
@@ -206,7 +231,7 @@ def query(request: QueryRequest):
                 dense_rank=d_rank,
                 bm25_rank=b_rank,
                 found_by_both=d_rank is not None and b_rank is not None,
-            )
+            ).model_dump()
         )
 
     response = {
@@ -215,13 +240,13 @@ def query(request: QueryRequest):
         "retrieved": payload,
     }
 
-    if not request.generate or not settings.can_generate:
+    if not will_generate:
         response["answer"] = None
         response["note"] = (
             "retrieval only — set ANTHROPIC_API_KEY to generate answers"
             if not settings.can_generate else "generation not requested"
         )
-        return response
+        return _cache_and_return(cache, generation, key, response)
 
     from app.llm import ClaudeLLM
 
@@ -250,7 +275,15 @@ def query(request: QueryRequest):
         ],
         "tokens": {"input": answer.input_tokens, "output": answer.output_tokens},
     }
-    return response
+    return _cache_and_return(cache, generation, key, response)
+
+
+def _cache_and_return(cache, generation: int, key: str, response: dict) -> dict:
+    # A negative generation means the cache was unreachable when the request
+    # started; storing under it could serve this answer after a later outage.
+    if generation >= 0:
+        cache.set(key, response)
+    return {**response, "cached": False}
 
 
 @app.delete("/documents/{document_id}")
@@ -258,4 +291,5 @@ def delete_document(document_id: str):
     removed = state["store"].delete_document(document_id)
     if removed == 0:
         raise HTTPException(status_code=404, detail="unknown document")
+    state["cache"].invalidate()
     return {"document_id": document_id, "chunks_removed": removed}

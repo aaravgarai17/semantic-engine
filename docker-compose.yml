@@ -11,6 +11,16 @@ services:
       EMBEDDING_PROVIDER: ${EMBEDDING_PROVIDER:-hash}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # memory (default) or pgvector. With pgvector, point DATABASE_URL at db.
+      STORE: ${STORE:-memory}
+      DATABASE_URL: ${DATABASE_URL:-postgresql://engine:engine@db:5432/engine}
+      # Empty disables the query cache; redis://redis:6379/0 enables it.
+      REDIS_URL: ${REDIS_URL:-}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "python", "-c",
              "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
@@ -30,6 +40,15 @@ services:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U engine"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # Query cache, for REDIS_URL. Optional: without it every query runs uncached.
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
