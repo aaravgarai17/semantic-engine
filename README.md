@@ -180,7 +180,7 @@ retain more lexical signal than the "embeddings can't do exact match" framing
 suggests — that intuition is accurate for older models and largely stale for
 current ones.
 
-BM25 still earns its place: it is **40× faster** (0.03 ms vs 1.14 ms), needs no
+BM25 still earns its place: it is **40× faster** (0.03 ms vs 1.29 ms), needs no
 model, and would come into its own on a corpus full of terms the embedding
 model never saw — internal product codes, part numbers, a specialised domain.
 Just not this one.
@@ -371,7 +371,7 @@ docker compose up --build
 ## Tests
 
 ```bash
-pytest -q                                     # 131 tests
+pytest -q                                     # 132 tests
 pytest --cov=app --cov-report=term-missing    # 90%
 ```
 
@@ -382,9 +382,9 @@ numbered headings, citation parsing including fabricated references, ingestion
 including failure paths, and the API end to end.
 
 CI runs on Python 3.10/3.11/3.12, executes the retrieval evaluation (which
-**exits non-zero if hybrid fails to beat the best single method**), runs an API
-smoke test, and on `main` re-runs the evaluation with real sentence-transformer
-embeddings.
+fails only if a method produces no score or no verdict is reported, never on
+which method wins), runs an API smoke test, and on `main` re-runs the
+evaluation with real sentence-transformer embeddings.
 
 ---
 
@@ -399,8 +399,8 @@ embeddings.
 - **Postgres keyword search would differ.** The in-memory path uses the BM25
   written here; pgvector's path uses `ts_rank_cd`, a different scoring
   function. Results would shift slightly between backends.
-- **The evaluation corpus is synthetic, small, and easy.** 13 documents, 45
-  chunks, 22 questions, written by me. It is clean prose on distinct topics —
+- **The evaluation corpus is synthetic, small, and easy.** 14 documents, 49
+  chunks, 40 questions, written by me. It is clean prose on distinct topics —
   close to the best case for an embedding model, which is a large part of why
   dense retrieval scored 100% and fusion had nothing to add. A corpus with real
   out-of-vocabulary identifiers, near-duplicate passages, and messier writing
@@ -434,8 +434,8 @@ semantic-engine/
 │   ├── extract.py     # PDF / DOCX / MD / TXT
 │   └── main.py        # FastAPI
 ├── eval/
-│   ├── dataset.py     # 13 docs, 22 labelled questions
+│   ├── dataset.py     # 14 docs, 40 labelled questions
 │   └── run_eval.py    # the comparison table
-├── tests/             # 131 tests, fully offline
-└── verify.sh          # 7 checks proving this README
+├── tests/             # 132 tests, fully offline
+└── verify.sh          # 8 checks proving this README
 ```
